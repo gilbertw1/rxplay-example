@@ -38,20 +38,26 @@ object Test extends App {
 object RxPlay {
   implicit def enumerator2Observable[T](enum: Enumerator[T]): Observable[T] = {
     Observable({ observer: Observer[T] =>
-      enum (
+      var cancelled = false
+      val cancellableEnum = enum through Enumeratee.breakE[T](_ => cancelled)
+
+      cancellableEnum (
         Iteratee.foreach(observer.onNext(_))
       ).onComplete {
         case Success(_) => observer.onCompleted()
         case Failure(e) => observer.onError(e)
       }
 
-      new Subscription { override def unsubscribe() = {} }
+      new Subscription { override def unsubscribe() = { cancelled = true } }
     })
   }
 
   implicit def observable2Enumerator[T](obs: Observable[T]): Enumerator[T] = {
+    var subscription: Option[Subscription] = None
     Concurrent.unicast[T](onStart = { chan =>
-      obs.subscribe(new ChannelObserver(chan))
+      subscription = Some(obs.subscribe(new ChannelObserver(chan)))
+    }, onComplete = {
+      subscription.foreach(_.unsubscribe)
     })
   }
 
